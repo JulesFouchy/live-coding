@@ -12,13 +12,16 @@ uniform float uTime;
 
 // BEGIN DYNAMIC PARAMS
 
+uniform float landDensity;
+uniform vec3 skyColor;
+uniform vec3 starColor;
+
 uniform float radius;
 uniform vec3 sunDir;
 uniform vec3 underWaterColor;
 uniform float underWaterAbsorption;
 uniform float waterIDR;
 uniform vec3 ambientColor;
-uniform vec3 bgColor;
 
 uniform float noiseOffset;
 uniform float noiseScale;
@@ -30,6 +33,12 @@ uniform float specularStrength;
 
 uniform int enableReflection;
 uniform int enableRefraction;
+
+uniform float foamFrequency;
+uniform float foamDensity;
+uniform float foamAmplitude;
+
+uniform float test;
 
 // END DYNAMIC PARAMS
 
@@ -43,7 +52,7 @@ uniform int enableRefraction;
 #define SURF_DIST 0.001
 #define NORMAL_DELTA 0.0001
 
-#define FBM_MAX_ITER 10
+#define FBM_MAX_ITER 8
 
 // ----- Useful functions ----- //
 #define rot2(a) mat2(cos(a), -sin(a), sin(a), cos(a))
@@ -187,8 +196,29 @@ vec3 vectorWiggle(float x) {
     return fbm(x, 1., 2);
 }
 
+
 vec3 blendColor(float t, vec3 a, vec3 b) {
 	return sqrt((1. - t) * pow(a, vec3(2.)) + t * pow(b, vec3(2.)));
+}
+
+// source: http://lolengine.net/blog/2013/07/27/rgb-to-hsv-in-glsl
+// All components are in the range [0, 1], including hue.
+vec3 rgb2hsv(vec3 c) {
+    vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+    vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
+    vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
+
+    float d = q.x - min(q.w, q.y);
+    float e = 1.0e-10;
+    return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+}
+
+// All components are in the range [0, 1], including hue.
+vec3 hsv2rgb(vec3 c)
+{
+    vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+    vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+    return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
 }
 
 // ----- distance functions for 3D primitives ----- //
@@ -205,12 +235,11 @@ float polysmin( float a, float b, float k ) {
 }
 
 float sphereSDF(vec3 pos) {
-    float t = 1 - waveAmplitude * fbm(pos * waveFrequency + vec3(0.1 * uTime), 1., 8);
-    return length(pos) - radius * t;
+    return length(pos) - radius + waveAmplitude * mix(-1., landDensity, fbm(pos * waveFrequency + vec3(0.1 * mod(uTime, 1000)), 1., 6));
 }
 
 float noisySphereSDF(vec3 pos) {
-    return length(pos) - radius - mix(-1, 1, fbm(pos * noiseScale + noiseOffset, 1., octavesNb));
+    return length(pos) - radius - mix(-1., landDensity, fbm(pos * noiseScale + noiseOffset, 1., octavesNb));
 }
 
 float sceneSDF(vec3 pos) {
@@ -258,12 +287,12 @@ vec3 render(vec3 ro, vec3 rd) { // ray origin and dir
   vec3 rockColor = vec3(.080, .050, .030);
   vec3 snowColor = vec3(.6, .6, .6);
 
-  vec3 finalCol = bgColor;
+  vec3 finalCol;
 
   float d = rayMarchSurface(ro, rd);
+  vec3 p = ro + rd * d;
 
   if( d < MAX_DIST) {
-    vec3 p = ro + rd * d;
     vec3 normal = getNormalSurface(p);
 
     // in water
@@ -282,7 +311,7 @@ vec3 render(vec3 ro, vec3 rd) { // ray origin and dir
             // if with go out the surface throught the water,
             // compute the distance travelled inside the water and update depth
             dirDepth = raySphereDepth(p, dir, vec3(0), radius);
-            finalCol = bgColor;
+            finalCol = skyColor;
         }else {
             finalCol = underWaterColor;
         }
@@ -303,10 +332,14 @@ vec3 render(vec3 ro, vec3 rd) { // ray origin and dir
         }
 
         // FOAM
-        // float foamNoise = fbm(p*100, 1, 2);
-        // finalCol = mix(finalCol, vec3(1), foamNoise*naturalDepth);
+        float foarmTime = mod(uTime, 1000);
 
-
+        //foamFrequency
+        
+        float foamNoise = fbm(p*foamAmplitude*10 + foarmTime * foamFrequency * vec3(2, 4, 1.8), 1, 3);
+        float foarCoeff = saturate(exp(-naturalDepth*10/foamDensity));
+        
+        finalCol = mix(finalCol, vec3(0.8), foamNoise*foarCoeff);
     }else {
         // surface lighting
 
@@ -333,9 +366,24 @@ vec3 render(vec3 ro, vec3 rd) { // ray origin and dir
         //finalCol = vec3(perlinNoise(noiseOffset + p*noiseScale));
     }
     
+    
+  }
+  else {
+      float x = length(rd.xz);
+      float y = length(rd.yz);
+    //   float t = pow(perlinNoise(vTexCoords*100. + 10. * vec2(x, y) + vec2(0, -uTime)), 100.);
+      float t = pow(perlinNoise(rd * 100. + 0.2 * vec3(0, -uTime, -uTime)), 100.);
+      finalCol = mix(skyColor, starColor, t);
   }
 
   // finalCol = vec3(glow*0.1);
+    // vec3 hsvFinalCol = rgb2hsv(finalCol);
+
+    // hsvFinalCol.r = mix(hsvFinalCol.r, test, .5);
+
+    // finalCol = hsv2rgb(hsvFinalCol);
+
+    finalCol += 0.01;
 	return vec3(saturate(finalCol));
 }
 
