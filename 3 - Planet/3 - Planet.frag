@@ -12,33 +12,22 @@ uniform float uTime;
 
 // BEGIN DYNAMIC PARAMS
 
-uniform float landDensity;
-uniform vec3 skyColor;
-uniform vec3 starColor;
-
 uniform float radius;
 uniform vec3 sunDir;
-uniform vec3 underWaterColor;
-uniform float underWaterAbsorption;
-uniform float waterIDR;
+uniform vec3 sunColor;
 uniform vec3 ambientColor;
+uniform vec3 bgColor;
 
 uniform float noiseOffset;
-uniform float noiseScale;
-uniform int octavesNb;
-uniform float waveAmplitude;
-uniform float waveFrequency;
-
 uniform float specularStrength;
+uniform float noiseScale;
 
-uniform int enableReflection;
-uniform int enableRefraction;
+uniform float oceanThreshold;
+uniform float shoreThreshold;
+uniform float grassThreshold;
+uniform float rockThreshold;
 
-uniform float foamFrequency;
-uniform float foamDensity;
-uniform float foamAmplitude;
-
-uniform float test;
+uniform int octavesNb;
 
 // END DYNAMIC PARAMS
 
@@ -49,10 +38,10 @@ uniform float test;
 #define MAX_STEPS 150
 
 #define MAX_DIST 200.
-#define SURF_DIST 0.001
+#define SURF_DIST 0.0001
 #define NORMAL_DELTA 0.0001
 
-#define FBM_MAX_ITER 8
+#define FBM_MAX_ITER 10
 
 // ----- Useful functions ----- //
 #define rot2(a) mat2(cos(a), -sin(a), sin(a), cos(a))
@@ -196,29 +185,8 @@ vec3 vectorWiggle(float x) {
     return fbm(x, 1., 2);
 }
 
-
 vec3 blendColor(float t, vec3 a, vec3 b) {
 	return sqrt((1. - t) * pow(a, vec3(2.)) + t * pow(b, vec3(2.)));
-}
-
-// source: http://lolengine.net/blog/2013/07/27/rgb-to-hsv-in-glsl
-// All components are in the range [0, 1], including hue.
-vec3 rgb2hsv(vec3 c) {
-    vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
-    vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
-    vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
-
-    float d = q.x - min(q.w, q.y);
-    float e = 1.0e-10;
-    return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
-}
-
-// All components are in the range [0, 1], including hue.
-vec3 hsv2rgb(vec3 c)
-{
-    vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
-    vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
-    return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
 }
 
 // ----- distance functions for 3D primitives ----- //
@@ -234,156 +202,79 @@ float polysmin( float a, float b, float k ) {
     return mix( b, a, h ) - k*h*(1.0-h);
 }
 
-float sphereSDF(vec3 pos) {
-    return length(pos) - radius + waveAmplitude * mix(-1., landDensity, fbm(pos * waveFrequency + vec3(0.1 * mod(uTime, 1000)), 1., 6));
-}
-
-float noisySphereSDF(vec3 pos) {
-    return length(pos) - radius - mix(-1., landDensity, fbm(pos * noiseScale + noiseOffset, 1., octavesNb));
-}
-
 float sceneSDF(vec3 pos) {
-    return min(sphereSDF(pos), noisySphereSDF(pos));
+  return length(pos) - radius - saturate(mix(-1, 1, fbm(pos * noiseScale + noiseOffset, 1., octavesNb)));
 }
 
-#define DECL_NORMAL_FUNC(_name, _sceneSDF, _h) vec3 _name(vec3 p) {const vec2 k = vec2(1., -1.); return normalize( k.xyy * _sceneSDF( p + k.xyy*_h ) + k.yyx * _sceneSDF( p + k.yyx*_h ) + k.yxy * _sceneSDF( p + k.yxy*_h ) + k.xxx * _sceneSDF( p + k.xxx*_h ) ); }
+vec3 getNormal(vec3 p) {
+  const float h = NORMAL_DELTA;
+	const vec2 k = vec2(1., -1.);
+    return normalize( k.xyy * sceneSDF( p + k.xyy*h ) + 
+                      k.yyx * sceneSDF( p + k.yyx*h ) + 
+                      k.yxy * sceneSDF( p + k.yxy*h ) + 
+                      k.xxx * sceneSDF( p + k.xxx*h ) );
+}
 
-DECL_NORMAL_FUNC(getNormalSurface, sceneSDF, NORMAL_DELTA)
-DECL_NORMAL_FUNC(getNormalWithDepth, sceneSDF, NORMAL_DELTA)
+float rayMarching(vec3 ro, vec3 rd) {
+    float t = 0.;
+ 	
+    for(int i = 0; i < MAX_STEPS; i++) {
+    	vec3 pos = ro + rd * t;
+      float d = sceneSDF(pos);
+      
+      t += 0.8 * d;
 
-// vec3 getNormal(vec3 p) {
-//   const float h = NORMAL_DELTA;
-// 	const vec2 k = vec2(1., -1.);
-//     return normalize( k.xyy * sceneSDF( p + k.xyy*h ) + 
-//                       k.yyx * sceneSDF( p + k.yyx*h ) + 
-//                       k.yxy * sceneSDF( p + k.yxy*h ) + 
-//                       k.xxx * sceneSDF( p + k.xxx*h ) );
-// }
+      // If we are very close to the object, consider it as a hit and exit this loop
+      if( t > MAX_DIST || abs(d) < SURF_DIST*0.99) break;
+    }
+    return t;
+}
 
-#define DECL_RAYMARCH_FUNC(_name, _sceneSDF, _precision) float _name(vec3 ro, vec3 rd) { float t = 0.; for(int i = 0; i < MAX_STEPS; i++) { vec3 pos = ro + rd * t; float d = _sceneSDF(pos); t += _precision * d; if( t > MAX_DIST || abs(d) < SURF_DIST*0.99) break; } return t; }
+vec3 gradient(float t, vec3 c1, vec3 c2) {
 
-DECL_RAYMARCH_FUNC(rayMarchSurface, sceneSDF, 0.8)
-DECL_RAYMARCH_FUNC(rayMarchWithDepth, noisySphereSDF, 0.8)
-
-float raySphereDepth(vec3 r0, vec3 rd, vec3 s0, float sr) {
-    // - r0: ray origin
-    // - rd: normalized ray direction
-    // - s0: sphere center
-    // - sr: sphere radius
-    // - Returns distance between the two intersections
-    float a = dot(rd, rd);
-    vec3 s0_r0 = r0 - s0;
-    float b = 2.0 * dot(rd, s0_r0);
-    float c = dot(s0_r0, s0_r0) - (sr * sr);
-    float delta = b*b - 4.0*a*c;
-    return sqrt(abs(delta))/a;
+    return mix(c1, c2, t);
 }
 
 vec3 render(vec3 ro, vec3 rd) { // ray origin and dir
   
+
   vec3 waterColor = vec3(.015, .110, .455);
   vec3 grassColor = vec3(.086, .132, .018);
   vec3 beachColor = vec3(.353, .372, .121);
   vec3 rockColor = vec3(.080, .050, .030);
   vec3 snowColor = vec3(.6, .6, .6);
 
-  vec3 finalCol;
+  vec3 finalCol = bgColor;
 
-  float d = rayMarchSurface(ro, rd);
-  vec3 p = ro + rd * d;
+  float d = rayMarching(ro, rd);
 
   if( d < MAX_DIST) {
-    vec3 normal = getNormalSurface(p);
+    vec3 p = ro + rd * d;
+    vec3 normal = getNormal(p);
+    vec3 ref = reflect(rd, normal);
 
-    // in water
-    if(sphereSDF(p) < noisySphereSDF(p)) {
+    float dist = length(p) - radius;
 
-        float naturalDepth = rayMarchWithDepth(p, normalize(-p));
-
-        vec3 dir = rd;
-        // REFRACTION
-        if( enableRefraction > 0) dir = refract(rd, normal, waterIDR);
-        
-        float dirDepth = rayMarchWithDepth(p, dir);
-        
-        // change the attenuated color using the bgColoc or underWaterColor
-        if( dirDepth > MAX_DIST) {
-            // if with go out the surface throught the water,
-            // compute the distance travelled inside the water and update depth
-            dirDepth = raySphereDepth(p, dir, vec3(0), radius);
-            finalCol = skyColor;
-        }else {
-            finalCol = underWaterColor;
-        }
-
-        finalCol *= exp(-dirDepth * underWaterAbsorption * (1. - waterColor));
-
-        // REFLEXION
-        if(enableReflection > 0) {
-            vec3 reflectDir = reflect(rd, normal);
-            // float reflection = pow(saturate(dot(sunDir, reflectDir)), 5.);
-            // finalCol += reflection;
-            
-            vec3 H = normalize(sunDir + -reflectDir);
-            float reflection = pow(saturate(dot(normal, H)), specularStrength);
-
-            //Sum up the specular light factoring
-            finalCol += reflection;
-        }
-
-        // FOAM
-        float foarmTime = mod(uTime, 1000);
-
-        //foamFrequency
-        
-        float foamNoise = fbm(p*foamAmplitude*10 + foarmTime * foamFrequency * vec3(2, 4, 1.8), 1, 3);
-        float foarCoeff = saturate(exp(-naturalDepth*10/foamDensity));
-        
-        finalCol = mix(finalCol, vec3(0.8), foamNoise*foarCoeff);
-    }else {
-        // surface lighting
-
-        vec3 ref = reflect(rd, normal); 
-
-        float dist = length(p) - radius;
-
-        float sunLight = saturate(dot(normal, normalize(sunDir)));
-        
-        float sunSpecular = pow(saturate(dot(normalize(sunDir), ref)), specularStrength); // Phong
-        
-        finalCol = mix(waterColor, beachColor, smoothstep(0., 0.01, dist));
-        finalCol = mix(finalCol, grassColor, smoothstep(0.04, 0.1, dist));
-        finalCol = mix(finalCol, rockColor, smoothstep(0.2, 0.4, dist));
-        if(dot(normal, normalize(p)) > 0.85){
-            finalCol = mix(finalCol, snowColor, smoothstep(0.42, 0.5, dist));
-        }
-        // if(dist < 0.) {
-        //     finalCol = mix(finalCol, waterColor, pow(-dist, 1./5.));
-        // }
-        float illumination = 0.2 + sunLight * 0.8;
-        illumination += sunLight; //vec3(0., 1., 0.);
-        finalCol *= saturate(illumination);
-        //finalCol = vec3(perlinNoise(noiseOffset + p*noiseScale));
+    float sunLight = saturate(dot(normal, normalize(sunDir)));
+    
+    float sunSpecular = pow(saturate(dot(normalize(sunDir), ref)), specularStrength); // Phong
+    
+    finalCol = mix(waterColor, beachColor, smoothstep(0., 0.01, dist));
+    finalCol = mix(finalCol, grassColor, smoothstep(0.04, 0.1, dist));
+    finalCol = mix(finalCol, rockColor, smoothstep(0.2, 0.4, dist));
+    if(dot(normal, normalize(p)) > 0.85){
+        finalCol = mix(finalCol, snowColor, smoothstep(0.42, 0.5, dist));
     }
-    
-    
-  }
-  else {
-      float x = length(rd.xz);
-      float y = length(rd.yz);
-    //   float t = pow(perlinNoise(vTexCoords*100. + 10. * vec2(x, y) + vec2(0, -uTime)), 100.);
-      float t = pow(perlinNoise(rd * 100. + 0.2 * vec3(0, -uTime, -uTime)), 100.);
-      finalCol = mix(skyColor, starColor, t);
+    // if(dist < 0.) {
+    //     finalCol = mix(finalCol, waterColor, pow(-dist, 1./5.));
+    // }
+    float illumination = 0.2 + sunLight * 0.8;
+    illumination += sunLight; //vec3(0., 1., 0.);
+    finalCol *= saturate(illumination);
+    //finalCol = vec3(perlinNoise(noiseOffset + p*noiseScale));
   }
 
   // finalCol = vec3(glow*0.1);
-    // vec3 hsvFinalCol = rgb2hsv(finalCol);
-
-    // hsvFinalCol.r = mix(hsvFinalCol.r, test, .5);
-
-    // finalCol = hsv2rgb(hsvFinalCol);
-
-    finalCol += 0.01;
 	return vec3(saturate(finalCol));
 }
 
