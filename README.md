@@ -1,4 +1,4 @@
-# live-coding
+# Live Coding
 
 Code and images from my live coding sessions with [Enguerrand de Smet](https://github.com/dsmtE/).
 
