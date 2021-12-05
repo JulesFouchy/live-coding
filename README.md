@@ -6,7 +6,7 @@ Code and images from my live coding sessions with [Enguerrand de Smet](https://g
 
 The idea was to stack planes that have interesting patterns on them to create some mysterious hologram effect
 
-<iframe width="880" height="495" src="https://www.youtube.com/embed/A_lApwgY1qk" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen=""></iframe>
+[![Hologram UI](http://img.youtube.com/vi/A_lApwgY1qk/0.jpg)](https://www.youtube.com/watch?v=A_lApwgY1qk "Hologram UI")
 
 ## Truchet Tiling
 
@@ -22,5 +22,6 @@ A simple demo of what can be done with ray marching
 
 ## Planet
 
-A procedural planet renderer with ray marching and a few other techniques. We put an emphasis on water rendering with reflections, refractions, scattering *etc*.
+A procedural planet rendered with ray marching and a few other techniques. We put an emphasis on water rendering with reflections, refractions, scattering *etc*.
+
 ![Planet](./3-Planet/img(17).png)
